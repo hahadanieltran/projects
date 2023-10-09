@@ -1,5 +1,5 @@
-#ifndef MY_MALLOC_H
-#define MY_MALLOC_H
+#ifndef MALLOC_H
+#define MALLOC_H
 
 #include <stdbool.h>
 #include <sys/types.h>
@@ -24,7 +24,7 @@
 #define ALLOC_HEADER_SIZE (sizeof(header) - (2 * sizeof(header *)))
 
 /* The minimum size request the allocator will service */
-#define MIN_ALLOCATION 8
+#define MIN_SIZE 8
 
 /**
  * @brief enum representing the allocation state of a block
@@ -35,7 +35,7 @@
 enum state {
   UNALLOCATED = 0,
   ALLOCATED = 1,
-  FENCEPOST = 2,
+  FENCE = 2,
 };
 
 /*
@@ -108,10 +108,10 @@ static inline void set_size_and_state(header * h, size_t size, enum state s) {
 #define MAX_OS_CHUNKS 1024
 
 // Malloc interface
-void * my_malloc(size_t size);
-void * my_calloc(size_t nmemb, size_t size);
-void * my_realloc(void * ptr, size_t size);
-void my_free(void * p);
+void * malloc(size_t size);
+void * calloc(size_t nmemb, size_t size);
+void * realloc(void * ptr, size_t size);
+void free(void * p);
 
 // Debug list verifitcation
 bool verify();

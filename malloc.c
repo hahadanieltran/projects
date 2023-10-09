@@ -6,7 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "myMalloc.h"
+#include "malloc.h"
 
 /* Due to the way assert() prints error messges we use out own assert function
  * for deteminism when testing assertions
@@ -34,13 +34,13 @@ static pthread_mutex_t mutex;
 header freelistSentinels[N_LISTS];
 
 /*
- * Pointer to the second fencepost in the most recently allocated chunk from
+ * Pointer to the second fence in the most recently allocated chunk from
  * the OS. Used for coalescing chunks
  */
-header * lastFencePost;
+header * lastFence;
 
 /*
- * Pointer to maintian the base of the heap to allow printing based on the
+ * Pointer to maintain the base of the heap to allow printing based on the
  * distance from the base of the heap
  */ 
 void * base;
@@ -63,9 +63,9 @@ static inline header * get_left_header(header * h);
 static inline header * ptr_to_header(void * p);
 
 // Helper functions for allocating more memory from the OS
-static inline void initialize_fencepost(header * fp, size_t left_size);
+static inline void initialize_fence(header * fp, size_t left_size);
 static inline void insert_os_chunk(header * hdr);
-static inline void insert_fenceposts(void * raw_mem, size_t size);
+static inline void insert_fence(void * raw_mem, size_t size);
 static header * allocate_chunk(size_t size);
 
 // Helper functions for freeing a block
@@ -124,14 +124,14 @@ inline static header * get_left_header(header * h) {
 }
 
 /**
- * @brief Fenceposts are marked as always allocated and may need to have
+ * @brief Fence are marked as always allocated and may need to have
  * a left object size to ensure coalescing happens properly
  *
- * @param fp a pointer to the header being used as a fencepost
- * @param left_size the size of the object to the left of the fencepost
+ * @param fp a pointer to the header being used as a fence
+ * @param left_size the size of the object to the left of the fence
  */
-inline static void initialize_fencepost(header * fp, size_t left_size) {
-	set_state(fp,FENCEPOST);
+inline static void initialize_fence(header * fp, size_t left_size) {
+	set_state(fp,FENCE);
 	set_size(fp, ALLOC_HEADER_SIZE);
 	fp->left_size = left_size;
 }
@@ -139,7 +139,7 @@ inline static void initialize_fencepost(header * fp, size_t left_size) {
 /**
  * @brief Helper function to maintain list of chunks from the OS for debugging
  *
- * @param hdr the first fencepost in the chunk allocated by the OS
+ * @param hdr the first fence in the chunk allocated by the OS
  */
 inline static void insert_os_chunk(header * hdr) {
   if (numOsChunks < MAX_OS_CHUNKS) {
@@ -148,24 +148,24 @@ inline static void insert_os_chunk(header * hdr) {
 }
 
 /**
- * @brief given a chunk of memory insert fenceposts at the left and 
+ * @brief given a chunk of memory insert fence at the left and 
  * right boundaries of the block to prevent coalescing outside of the
  * block
  *
  * @param raw_mem a void pointer to the memory chunk to initialize
  * @param size the size of the allocated chunk
  */
-inline static void insert_fenceposts(void * raw_mem, size_t size) {
+inline static void insert_fence(void * raw_mem, size_t size) {
   // Convert to char * before performing operations
   char * mem = (char *) raw_mem;
 
-  // Insert a fencepost at the left edge of the block
-  header * leftFencePost = (header *) mem;
-  initialize_fencepost(leftFencePost, ALLOC_HEADER_SIZE);
+  // Insert a fence at the left edge of the block
+  header * leftFence = (header *) mem;
+  initialize_fence(leftFence, ALLOC_HEADER_SIZE);
 
-  // Insert a fencepost at the right edge of the block
-  header * rightFencePost = get_header_from_offset(mem, size - ALLOC_HEADER_SIZE);
-  initialize_fencepost(rightFencePost, size - 2 * ALLOC_HEADER_SIZE);
+  // Insert a fence at the right edge of the block
+  header * rightFence = get_header_from_offset(mem, size - ALLOC_HEADER_SIZE);
+  initialize_fence(rightFence, size - 2 * ALLOC_HEADER_SIZE);
 }
 
 /**
@@ -179,7 +179,7 @@ inline static void insert_fenceposts(void * raw_mem, size_t size) {
  */
 static header * allocate_chunk(size_t size) {
   void * mem = sbrk(size);
-  insert_fenceposts(mem, size);
+  insert_fence(mem, size);
   header * hdr = (header *) ((char *)mem + ALLOC_HEADER_SIZE);
   set_state(hdr, UNALLOCATED);
   set_size(hdr, size - 2 * ALLOC_HEADER_SIZE);
@@ -195,21 +195,17 @@ static header * allocate_chunk(size_t size) {
  * @return A block satisfying the user's request
  */
 static inline header * allocate_object(size_t raw_size) {
-  // TODO implement allocation
-  // (void) raw_size;
-  // assert(false);
-  // exit(1);
   // roundup to 8 bytes
   if (raw_size == 0) {
     return NULL;
   }
-  size_t size8 = ((raw_size + 7)/MIN_ALLOCATION)*MIN_ALLOCATION;
+  size_t size8 = ((raw_size + 7)/ MIN_SIZE) * MIN_SIZE;
   assert(size8 < ARENA_SIZE);
   if (size8 < (ALLOC_HEADER_SIZE)) {
     size8 = (ALLOC_HEADER_SIZE);
   }
   // starting list
-  int ilist = size8/MIN_ALLOCATION - 1;
+  int ilist = size8/MIN_SIZE - 1;
   if (ilist > N_LISTS) {
     ilist = N_LISTS - 1;
   }
@@ -223,18 +219,18 @@ static inline header * allocate_object(size_t raw_size) {
     else if (ilist == N_LISTS - 1 && get_size(freelist->next) < size8) {
       header *allocate = allocate_chunk(ARENA_SIZE);
       header *lastFence = get_left_header(allocate);
-      if (get_header_from_offset(lastFencePost, get_size(lastFencePost)) == lastFence) {
+      if (get_header_from_offset(lastFence, get_size(lastFence)) == lastFence) {
         set_state(lastFence, UNALLOCATED);
-        set_size_and_state(lastFencePost, get_size(lastFencePost) + get_size(lastFence) + get_size(allocate), UNALLOCATED);
-        add_to_list(lastFencePost);
-        header *size = lastFencePost;
-        lastFencePost = get_right_header(allocate);
-        lastFencePost->left_size = get_size(size);
+        set_size_and_state(lastFence, get_size(lastFence) + get_size(lastFence) + get_size(allocate), UNALLOCATED);
+        add_to_list(lastFence);
+        header *size = lastFence;
+        lastFence = get_right_header(allocate);
+        lastFence->left_size = get_size(size);
       }
       else {
         add_to_list(allocate);
         insert_os_chunk(get_left_header(allocate));
-        lastFencePost = get_right_header(allocate);
+        lastFence = get_right_header(allocate);
       }
     }
   }
@@ -261,7 +257,7 @@ static inline header * allocate_object(size_t raw_size) {
     remove_from_list(obj4);
     add_to_list(obj4);
   }
-  if (get_state(obj4) != FENCEPOST) {
+  if (get_state(obj4) != FENCE) {
     header *obj6 = get_header_from_offset(obj4, -obj4->left_size);
     if (get_state(obj6) == UNALLOCATED && get_state(obj4) == UNALLOCATED) {
       remove_from_list(obj6);
@@ -290,11 +286,7 @@ static inline header * ptr_to_header(void * p) {
  *
  * @param p The pointer returned to the user by a call to malloc
  */
-static inline void deallocate_object(void * p) {
-  // TODO implement deallocation
-  // (void) p;
-  // assert(false);
-  // exit(1);
+static inline void deallocate_object(void * p) {  
   if (p == NULL) {
     return;
   }
@@ -307,14 +299,14 @@ static inline void deallocate_object(void * p) {
   header *right = get_right_header(hdr);
   int ilist;
   if ((get_state(left) == ALLOCATED && get_state(right) == ALLOCATED) ||
-      (get_state(left) == ALLOCATED && get_state(right) == FENCEPOST) ||
-      (get_state(left) == FENCEPOST && get_state(right) == ALLOCATED) ||
-       get_state(left) == FENCEPOST && get_state(right) == FENCEPOST) {
+      (get_state(left) == ALLOCATED && get_state(right) == FENCE) ||
+      (get_state(left) == FENCE && get_state(right) == ALLOCATED) ||
+       get_state(left) == FENCE && get_state(right) == FENCE) {
     set_state(hdr, UNALLOCATED);
     add_to_list(hdr);
   }
   else if ((get_state(right) == UNALLOCATED && get_state(left) == ALLOCATED) ||
-           (get_state(right) == UNALLOCATED && get_state(left) == FENCEPOST)) {
+           (get_state(right) == UNALLOCATED && get_state(left) == FENCE)) {
     set_size_and_state(hdr, get_size(hdr) + get_size(right), UNALLOCATED);
     remove_from_list(right);
     add_to_list(hdr);
@@ -322,10 +314,10 @@ static inline void deallocate_object(void * p) {
     rightNext->left_size = get_size(hdr);
   }
   else if ((get_state(left) == UNALLOCATED && get_state(right) == ALLOCATED) ||
-           (get_state(left) == UNALLOCATED && get_state(right) == FENCEPOST)) {
+           (get_state(left) == UNALLOCATED && get_state(right) == FENCE)) {
     set_state(hdr, UNALLOCATED);
     set_size(left, get_size(left) + get_size(hdr));
-    ilist = (get_size(hdr) - ALLOC_HEADER_SIZE / MIN_ALLOCATION) - 1;
+    ilist = (get_size(hdr) - ALLOC_HEADER_SIZE / MIN_SIZE) - 1;
     if (ilist < N_LISTS) {
       remove_from_list(left);
       add_to_list(left);
@@ -336,7 +328,7 @@ static inline void deallocate_object(void * p) {
     set_state(hdr, UNALLOCATED);
     remove_from_list(right);
     set_size(left, get_size(left) + get_size(hdr) + get_size(right));
-    ilist = ((get_size(left) - ALLOC_HEADER_SIZE) / MIN_ALLOCATION) - 1;
+    ilist = ((get_size(left) - ALLOC_HEADER_SIZE) / MIN_SIZE) - 1;
     if (ilist < N_LISTS) {
       add_to_list(left);
     }
@@ -345,7 +337,7 @@ static inline void deallocate_object(void * p) {
   }
 }
 static inline void add_to_list(header *p) {
-  int ilist = ((get_size(p) - ALLOC_HEADER_SIZE) / MIN_ALLOCATION) - 1;
+  int ilist = ((get_size(p) - ALLOC_HEADER_SIZE) / MIN_SIZE) - 1;
   if (ilist > N_LISTS) {
     ilist = N_LISTS - 1;
   }
@@ -442,13 +434,13 @@ static inline bool verify_freelist() {
  * @return a pointer to an invalid header or NULL if all header's are valid
  */
 static inline header * verify_chunk(header * chunk) {
-	if (get_state(chunk) != FENCEPOST) {
-		fprintf(stderr, "Invalid fencepost\n");
+	if (get_state(chunk) != FENCE) {
+		fprintf(stderr, "Invalid fence\n");
 		print_object(chunk);
 		return chunk;
 	}
 	
-	for (; get_state(chunk) != FENCEPOST; chunk = get_right_header(chunk)) {
+	for (; get_state(chunk) != FENCE; chunk = get_right_header(chunk)) {
 		if (get_size(chunk)  != get_right_header(chunk)->left_size) {
 			fprintf(stderr, "Invalid sizes\n");
 			print_object(chunk);
@@ -491,12 +483,12 @@ static void init() {
   // Allocate the first chunk from the OS
   header * block = allocate_chunk(ARENA_SIZE);
 
-  header * prevFencePost = get_header_from_offset(block, -ALLOC_HEADER_SIZE);
-  insert_os_chunk(prevFencePost);
+  header * prevFence = get_header_from_offset(block, -ALLOC_HEADER_SIZE);
+  insert_os_chunk(prevFence);
 
-  lastFencePost = get_header_from_offset(block, get_size(block));
+  lastFence = get_header_from_offset(block, get_size(block));
 
-  // Set the base pointer to the beginning of the first fencepost in the first
+  // Set the base pointer to the beginning of the first fence in the first
   // chunk from the OS
   base = ((char *) block) - ALLOC_HEADER_SIZE; //sizeof(header);
 
@@ -518,25 +510,25 @@ static void init() {
 /* 
  * External interface
  */
-void * my_malloc(size_t size) {
+void * malloc(size_t size) {
   pthread_mutex_lock(&mutex);
   header * hdr = allocate_object(size); 
   pthread_mutex_unlock(&mutex);
   return hdr;
 }
 
-void * my_calloc(size_t nmemb, size_t size) {
-  return memset(my_malloc(size * nmemb), 0, size * nmemb);
+void * calloc(size_t nmemb, size_t size) {
+  return memset(malloc(size * nmemb), 0, size * nmemb);
 }
 
-void * my_realloc(void * ptr, size_t size) {
-  void * mem = my_malloc(size);
+void * realloc(void * ptr, size_t size) {
+  void * mem = malloc(size);
   memcpy(mem, ptr, size);
-  my_free(ptr);
+  free(ptr);
   return mem; 
 }
 
-void my_free(void * p) {
+void free(void * p) {
   pthread_mutex_lock(&mutex);
   deallocate_object(p);
   pthread_mutex_unlock(&mutex);
