@@ -1,7 +1,7 @@
 #ifndef TESTING_H
 #define TESTING_H
 
-#include "myMalloc.h"
+#include "malloc.h"
 #include "printing.h"
 
 void ** mallocing_loop(void ** array, size_t size, size_t n, printFormatter pf, bool silent);

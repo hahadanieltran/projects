@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-#include "myMalloc.h"
+#include "malloc.h"
 #include "testing.h"
 
 /**
