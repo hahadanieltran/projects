@@ -9,7 +9,7 @@
 #include "malloc.h"
 
 /* Due to the way assert() prints error messges we use out own assert function
- * for deteminism when testing assertions
+ * for determinism when testing assertions
  */
 #ifdef TEST_ASSERT
   inline static void assert(int e) {
@@ -177,7 +177,7 @@ inline static void insert_fence(void * raw_mem, size_t size) {
  * @return A pointer to the allocable block in the chunk (just after the 
  * first fencpost)
  */
-static header * allocate_chunk(size_t size) {
+static header *allocate_chunk(size_t size) {
   void * mem = sbrk(size);
   insert_fence(mem, size);
   header * hdr = (header *) ((char *)mem + ALLOC_HEADER_SIZE);
@@ -209,7 +209,7 @@ static inline header * allocate_object(size_t raw_size) {
   if (ilist > N_LISTS) {
     ilist = N_LISTS - 1;
   }
-  header * freelist = &freelistSentinels[ilist];
+  header *freelist = &freelistSentinels[ilist];
   for (; ilist < N_LISTS; ilist++) {
     freelist = &freelistSentinels[ilist];
     // test if the list is empty or not
